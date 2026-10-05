@@ -131,11 +131,66 @@ chem_wide <- list(anio, caio, nutr, docs) |>
   relocate(all_of(appr_cols), .after = watershed) |>
   arrange(siteId, date)
 
-# 4.0 Flag duplicates ----------------------------------------------------------
-# PLACEHOLDER — next step. Find date+siteId combos with >1 row (true source
-# duplicates / reanalyses), e.g. TLM01 2022-06-09 (ANIO) and 2023-01-30 (DOCS).
-# Expect more now that LTM sites are included.
+# 4.0 Quality assurance checks (region-agnostic) -------------------------------
+# Portable across regions: no hardcoded sites/dates. Collects every issue into
+# qa_log and writes it per region. Flags issues; applies only rules you've OK'd.
+region_tag <- unique(na.omit(chem_wide$watershed)) |> paste(collapse = "_")
+qa_log <- list()
 
+# 4.1 Watershed mapping integrity — THE portability check.
+# recode() silently yields NA for unmapped site prefixes. In a new region that
+# means every row. Fail loud here instead of exporting NA-watershed data.
+unmapped <- chem_wide |> filter(is.na(watershed))
+qa_log$unmapped_watershed <- nrow(unmapped)
+if (nrow(unmapped) > 0) {
+  warning("QA 4.1: ", nrow(unmapped), " rows have NA watershed — site prefix not in recode(). ",
+          "Update the watershed map for this region before trusting output.")
+  print(unmapped |> distinct(siteId))
+}
+
+# 4.2 Duplicate date+site rows (source reanalyses; fan out downstream joins)
+dupes <- chem_wide |> group_by(date, siteId, watershed) |> filter(n() > 1) |> ungroup()
+qa_log$duplicate_rows <- nrow(dupes)
+cat("\n[4.2] Duplicate date+site rows:", nrow(dupes), "across",
+    n_distinct(dupes[c("date","siteId")]), "combos\n")
+if (nrow(dupes)) print(arrange(dupes, siteId, date) |> select(date, siteId, watershed))
+
+# 4.3 Date range — catch a mis-parsed date (parser handles 3 encodings)
+qa_log$na_date <- sum(is.na(chem_wide$date))
+qa_log$out_of_window <- chem_wide |>
+  filter(date < as.Date("2021-07-01") | date > as.Date("2024-12-31")) |> nrow()
+cat("\n[4.3] NA dates:", qa_log$na_date, "| out-of-window:", qa_log$out_of_window, "\n")
+
+# 4.4 Non-positive analyte values — impossible concentrations; log-plot drops
+# them silently. RULE (applied): set <=0 to NA, logged so nothing vanishes unseen.
+analyte_cols <- c(anio_cols, caio_cols, nutr_cols, docs_cols)
+nonpos <- chem_wide |>
+  pivot_longer(all_of(analyte_cols), names_to="analyte", values_to="value") |>
+  filter(!is.na(value) & value <= 0)
+qa_log$nonpositive <- nrow(nonpos)
+cat("\n[4.4] Non-positive values set to NA:", nrow(nonpos), "\n")
+if (nrow(nonpos)) print(count(nonpos, analyte, name="n"))
+chem_wide <- chem_wide |> mutate(across(all_of(analyte_cols), ~ ifelse(.x <= 0, NA, .x)))
+
+# 4.5 Empty rows — joined-in date/site with no analyte data at all
+qa_log$empty_rows <- chem_wide |> filter(if_all(all_of(analyte_cols), is.na)) |> nrow()
+cat("\n[4.5] All-NA analyte rows:", qa_log$empty_rows, "\n")
+
+# 4.6 No approach flag — ENVI roster / coalesce sanity
+qa_log$no_approach <- chem_wide |> filter(appr1==0&appr2==0&appr3==0&appr4==0) |> nrow()
+cat("\n[4.6] Rows with no approach flag:", qa_log$no_approach, "\n")
+
+# 4.7 Completeness per analyte (expected sparsity varies by region)
+cat("\n[4.7] NA per analyte (of", nrow(chem_wide), "rows):\n")
+print(chem_wide |> summarise(across(all_of(analyte_cols), ~ sum(is.na(.x)))) |>
+        pivot_longer(everything(), names_to="analyte", values_to="n_NA") |>
+        arrange(desc(n_NA)) |> as.data.frame())
+
+# Write per-region QA record so each region leaves an auditable trail
+qa_summary <- tibble(region = region_tag, check = names(qa_log),
+                     value = unlist(qa_log))
+write_csv(qa_summary, paste0("output/qa_log_", region_tag, ".csv"))
+cat("\nQA log written: output/qa_log_", region_tag, ".csv\n", sep="")
 # 5.0 Export -------------------------------------------------------------------
 #Plots plots plots ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # long form for faceting (exclude id + approach cols from the pivot)
