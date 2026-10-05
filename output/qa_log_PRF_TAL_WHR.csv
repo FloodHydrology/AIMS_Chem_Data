@@ -1,0 +1,8 @@
+region,check,value
+PRF_TAL_WHR,unmapped_watershed,0
+PRF_TAL_WHR,duplicate_rows,4
+PRF_TAL_WHR,na_date,0
+PRF_TAL_WHR,out_of_window,0
+PRF_TAL_WHR,nonpositive,3
+PRF_TAL_WHR,empty_rows,0
+PRF_TAL_WHR,no_approach,0
