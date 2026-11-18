@@ -16,6 +16,8 @@
 #      Table     Power-law fits: elasticity, R2, days used/excluded
 #  5.0 Figure    Residuals of the power-law fits vs. Q ("dispersion")
 #  6.0 Figure    ASDN vs. Q colored by season
+#      Figure    Residuals vs. Q colored by season
+#      Figure    Residuals vs. Q colored by day of year
 #      Figure    Residuals vs. antecedent wetness
 #      Table     Dispersion and the R2 added by limb, season, antecedent wetness
 #  7.0 Main figure (WHR elasticity, dispersion, network maps)   [to do]
@@ -576,7 +578,62 @@ fig_season
 ggsave(file.path(fig_dir, "SI_ASDN_Q_by_season.png"), fig_season,
        width = 10, height = 9, dpi = 300)
 
-# 6.3 Figure: residuals vs. antecedent wetness ---------------------------------
+# 6.3 Figure: residuals vs. Q colored by season --------------------------------
+# Same residuals as the residuals-vs-Q figure, colored by season. Seasonal
+# mean residuals are in the dispersion table (resid_mean_* columns).
+fig_resid_season <- ggplot(resid_data, aes(x = Q_mm_day, y = resid, color = season)) +
+  geom_rect(data = dispersion, aes(xmin = 0, xmax = Inf, ymin = -resid_sd, ymax = resid_sd),
+            fill = "grey80", alpha = 0.5, inherit.aes = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_point(size = 1, alpha = 0.5) +
+  geom_text(data = table_dispersion,
+            aes(x = 0, y = Inf, label = sprintf("ΔR² season = %.2f", dR2_season)),
+            hjust = -0.1, vjust = 1.4, size = 3, color = "black", inherit.aes = FALSE) +
+  scale_x_log10(labels = log_labels) +
+  scale_color_manual(values = season_cols, name = NULL) +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1))) +
+  facet_wrap(~watershed, ncol = 3, labeller = site_lab) +
+  labs(x = "Daily mean discharge (mm/day)",
+       y = "Residual, log10(ASDN observed / ASDN predicted)",
+       caption = paste("Residuals from the per-site power-law fits. Gray band: ±1 SD.",
+                       "ΔR² season: R² added when season joins the power law.",
+                       "Meteorological seasons.")) +
+  theme_hydro +
+  theme(legend.position = "bottom")
+fig_resid_season
+
+ggsave(file.path(fig_dir, "SI_residuals_vs_Q_by_season.png"), fig_resid_season,
+       width = 10, height = 9, dpi = 300)
+
+# 6.4 Figure: residuals vs. Q colored by day of year ---------------------------
+# Cyclic color scale so Dec 31 and Jan 1 match. Season colors are anchored near
+# each season's center (winter at the year boundary).
+fig_resid_doy <- resid_data %>%
+  mutate(doy = yday(date)) %>%
+  ggplot(aes(x = Q_mm_day, y = resid, color = doy)) +
+  geom_rect(data = dispersion, aes(xmin = 0, xmax = Inf, ymin = -resid_sd, ymax = resid_sd),
+            fill = "grey80", alpha = 0.5, inherit.aes = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_point(size = 1, alpha = 0.6) +
+  scale_x_log10(labels = log_labels) +
+  scale_color_gradientn(colors = unname(season_cols[c(1, 2, 3, 4, 1)]),
+                        values = scales::rescale(c(1, 105, 196, 288, 366)),
+                        limits = c(1, 366),
+                        breaks = yday(as_date(paste0("2021-", c("01", "04", "07", "10"), "-01"))),
+                        labels = c("Jan", "Apr", "Jul", "Oct"),
+                        name = "Day of year") +
+  facet_wrap(~watershed, ncol = 3, labeller = site_lab) +
+  labs(x = "Daily mean discharge (mm/day)",
+       y = "Residual, log10(ASDN observed / ASDN predicted)",
+       caption = "Residuals from the per-site power-law fits. Gray band: ±1 SD. Cyclic day-of-year color scale.") +
+  theme_hydro +
+  theme(legend.position = "bottom", legend.key.width = unit(2, "cm"))
+fig_resid_doy
+
+ggsave(file.path(fig_dir, "SI_residuals_vs_Q_by_doy.png"), fig_resid_doy,
+       width = 10, height = 9, dpi = 300)
+
+# 6.5 Figure: residuals vs. antecedent wetness ---------------------------------
 fig_awi <- resid_data %>%
   filter(!is.na(AWI)) %>%
   ggplot(aes(x = AWI, y = resid, color = watershed)) +
