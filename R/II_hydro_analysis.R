@@ -20,7 +20,9 @@
 #      Figure    Residuals vs. Q colored by day of year
 #      Figure    Residuals vs. antecedent wetness
 #      Table     Dispersion and the R2 added by limb, season, antecedent wetness
-#  7.0 Main figure (WHR elasticity, dispersion, network maps)   [to do]
+#  7.0 Main fig 1 WHR: time series, elasticity, dispersion, STIC maps on two days
+#                (uses R/spatial_functions.R and aims_data/WHR_ENVI, WHR_STIC)
+#  8.0 Main fig 2 Cross-site: ASDN vs. Q with power laws, elasticity vs. dispersion
 #
 # Inputs
 #  data/AIMS_Q_connectivity_merge/output/streamDAG_Q_data.csv
@@ -658,9 +660,220 @@ fig_awi
 ggsave(file.path(fig_dir, "SI_residuals_vs_AWI.png"), fig_awi,
        width = 10, height = 9, dpi = 300)
 
-# 7.0 Main figure: WHR elasticity, dispersion, network maps --------------------
-# To do. Panels: (a) WHR log-log ASDN vs. Q with power law, (b) WHR residuals,
-# (c) maps of WHR STIC wet/dry states on days chosen from the residuals (e.g.,
-# similar Q, opposite residuals). Spatial inputs: aims_data/WHR_ENVI/
-# (watershed_WHR.zip, streamnetwork_WHR.zip, ENVI_SE_WHR.xlsx) and the
-# Site_Info sheet of aims_data/WHR_STIC/AIMS_SE_WHR_STICdata_ReadME.xlsx.
+# 7.0 Main figure 1: elasticity and dispersion at an example watershed ---------
+# (a) Q and ASDN time series, (b) log-log ASDN vs. Q with the power law
+# (elasticity), (c) residuals vs. Q (dispersion), (d, e) STIC wet/dry maps on two
+# days with similar Q but opposite residuals: same outlet flow, different network.
+#
+# Node states come from the raw STIC files (R/spatial_functions.R), because the
+# merged file only has network totals. Raw daily wet counts track streamDAG
+# wet_network_nodes closely (r = 0.97 at WHR) but match exactly on only ~1/3 of
+# days (streamDAG has all 20 nodes on every day and starts before the raw STIC
+# record, so it likely gap-fills). Map days are therefore days where the two
+# counts match exactly (checked below).
+library(sf)
+source("R/spatial_functions.R")
+
+ex_ws    <- "WHR"
+map_days <- as_date(c("2024-05-16", "2024-06-15"))
+# Days chosen with all 20 STICs reporting, wet count = streamDAG, ASDN < 100%,
+# Q within ~0.15 log units, residuals of opposite sign. Spring vs. early summer
+# 2024: a typical seasonal (ET-driven) contrast. Stronger alternative:
+# 2023-05-15 (Q 0.077 mm/d, ASDN 92%) vs. 2024-07-17 (Q 0.090 mm/d, ASDN 17%),
+# but the latter is the first day of a storm after 6 days of zero flow.
+
+# 7.1 Spatial data -------------------------------------------------------------
+ex_shed   <- read_zip_shape(ex_ws, "watershed")
+ex_crs    <- st_crs(ex_shed)
+ex_net    <- read_zip_shape(ex_ws, "streamnetwork") %>% st_set_crs(ex_crs)  # same UTM 16N, no EPSG tag
+ex_stic   <- read_stic_sites(ex_ws, ex_crs)
+ex_outlet <- read_envi_sites(ex_ws, ex_crs) %>% filter(distance_from_outlet == 0)
+ex_daily  <- read_stic_daily(ex_ws)
+
+# Q, ASDN, residual, and node counts on the map days
+map_info <- fit_data %>%
+  filter(watershed == ex_ws, date %in% map_days) %>%
+  select(date, Q_mm_day, ASDN_pct, resid) %>%
+  left_join(read_csv(merge_file, show_col_types = FALSE) %>%
+              filter(watershed == ex_ws) %>%
+              select(date, wet_nodes_streamDAG = wet_network_nodes),
+            by = "date") %>%
+  left_join(ex_daily %>%
+              group_by(date) %>%
+              summarise(n_stic = n(), wet_nodes_stic = sum(wet), .groups = "drop"),
+            by = "date") %>%
+  arrange(date) %>%
+  mutate(day_lab = c("i", "ii")[seq_len(n())],
+         title   = sprintf("(%s) %s: Q = %.2f mm/day, ASDN = %.0f%%",
+                           c("d", "e")[seq_len(n())], format(date, "%d %b %Y"),
+                           Q_mm_day, ASDN_pct))
+print(map_info, width = Inf)
+if (any(map_info$wet_nodes_stic != map_info$wet_nodes_streamDAG)) {
+  warning("Raw STIC wet count differs from streamDAG on a map day")
+}
+
+# 7.2 Panels -------------------------------------------------------------------
+ex_col  <- col_line[[ex_ws]]
+ex_pts  <- filter(fit_data, watershed == ex_ws, use_in_fit)
+ex_fit  <- filter(pl_fits, watershed == ex_ws)
+ex_disp <- filter(dispersion, watershed == ex_ws)
+ex_dates <- range(filter(hydro, watershed == ex_ws)$date)
+
+main_theme <- theme_hydro +
+  theme(axis.title = element_text(size = 10), axis.text = element_text(size = 8),
+        plot.title = element_text(size = 10, face = "plain"))
+
+# Highlighted map days on the scatter panels
+mark_days <- function(y) {
+  list(geom_point(data = map_info, aes(x = Q_mm_day, y = {{ y }}),
+                  shape = 21, fill = "white", color = "black", size = 3, stroke = 0.9),
+       geom_text(data = map_info, aes(x = Q_mm_day, y = {{ y }}, label = day_lab),
+                 nudge_x = 0.13, hjust = 0, vjust = 0.5, size = 3.3, fontface = "bold"))
+}
+
+# (a) Time series
+p1a <- plot_ts_site(ex_ws, "", show_x = TRUE, show_ylab = TRUE) +
+  geom_vline(xintercept = map_info$date, linetype = "dashed", linewidth = 0.4) +
+  annotate("label", x = map_info$date, y = 100, label = map_info$day_lab,
+           size = 3, fontface = "bold", label.size = 0, label.padding = unit(0.1, "lines")) +
+  annotate("text", x = ex_dates[1], y = 100, label = "(a)", hjust = 0.2, vjust = 1, size = 3.5) +
+  scale_x_date(limits = ex_dates, date_breaks = "6 months", date_labels = "%b %Y",
+               expand = expansion(mult = 0.01)) +
+  labs(title = NULL, x = NULL) +
+  main_theme +
+  theme(axis.title.y.left  = element_text(color = "black"),
+        axis.title.y.right = element_text(color = "grey25"))
+
+# (b) Elasticity
+p1b <- ggplot(ex_pts, aes(x = Q_mm_day, y = ASDN_pct)) +
+  geom_point(shape = 21, fill = ex_col, color = "grey40", stroke = 0.2, size = 1.4, alpha = 0.8) +
+  geom_line(data = filter(pl_lines, watershed == ex_ws), aes(x = Q, y = ASDN_hat), linewidth = 0.9) +
+  mark_days(ASDN_pct) +
+  annotate("text", x = Inf, y = 0, hjust = 1.05, vjust = -0.5, size = 3,
+           label = sprintf("Elasticity b = %.2f\nR² = %.2f", ex_fit$elasticity, ex_fit$r2)) +
+  annotate("text", x = 0, y = Inf, label = "(b)", hjust = -0.3, vjust = 1.4, size = 3.5) +
+  scale_x_log10(labels = log_labels) +
+  scale_y_log10(breaks = c(5, 10, 20, 50, 100)) +
+  labs(x = "Daily mean discharge (mm/day)", y = "ASDN (%)") +
+  main_theme
+
+# (c) Dispersion
+p1c <- ggplot(ex_pts, aes(x = Q_mm_day, y = resid)) +
+  annotate("rect", xmin = 0, xmax = Inf, ymin = -ex_disp$resid_sd, ymax = ex_disp$resid_sd,
+           fill = "grey80", alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_point(shape = 21, fill = ex_col, color = "grey40", stroke = 0.2, size = 1.4, alpha = 0.8) +
+  mark_days(resid) +
+  annotate("text", x = Inf, y = -Inf, hjust = 1.05, vjust = -0.5, size = 3,
+           label = sprintf("Dispersion (SD) = %.2f\n(×%.2f)", ex_disp$resid_sd, ex_disp$factor_sd)) +
+  annotate("text", x = 0, y = Inf, label = "(c)", hjust = -0.3, vjust = 1.4, size = 3.5) +
+  scale_x_log10(labels = log_labels) +
+  labs(x = "Daily mean discharge (mm/day)", y = "Residual, log10(obs/pred)") +
+  main_theme
+
+# (d, e) Network maps
+# Reach states between STICs (rules in classify_reaches(), R/spatial_functions.R):
+# a reach is wet if the STICs on both ends are wet; at a confluence the shared
+# reach is wet if the downstream STIC and either upstream STIC are wet; headwater
+# reaches follow the STIC below them and the outlet reach the STIC above it.
+ex_graph <- build_stream_graph(ex_net, ex_stic, ex_outlet)
+
+plot_network_day <- function(day, title, scale_bar = FALSE) {
+  wet_by_site <- ex_daily %>% filter(date == day) %>% select(siteId, wet) %>% deframe()
+  reaches <- classify_reaches(ex_graph, wet_by_site) %>%
+    filter(!is.na(wet)) %>%   # drops short unmonitored stubs at the outlet (no STIC above or below)
+    mutate(state = factor(if_else(wet, "Wet", "Dry"), levels = c("Wet", "Dry")))
+  bb <- st_bbox(ex_shed)
+  p <- ggplot() +
+    geom_sf(data = ex_shed, fill = "grey96", color = "grey40", linewidth = 0.4) +
+    geom_sf(data = reaches, aes(color = state), linewidth = 1.2, lineend = "round") +
+    geom_sf(data = ex_outlet, shape = 24, fill = "black", size = 2.2) +
+    scale_color_manual(values = c(Wet = "#2166AC", Dry = "#F4A582"), drop = FALSE,
+                       name = "Reach state", na.value = "grey70") +
+    coord_sf(datum = NA, expand = FALSE) +
+    labs(title = title) +
+    theme_void() +
+    theme(plot.title = element_text(size = 9.5, margin = margin(b = 3)),
+          plot.margin = margin(4, 4, 4, 4))
+  if (scale_bar) {
+    x0 <- bb[["xmin"]] + 30; y0 <- bb[["ymin"]] + 30
+    p <- p +
+      annotate("segment", x = x0, xend = x0 + 250, y = y0, yend = y0, linewidth = 0.8) +
+      annotate("text", x = x0 + 125, y = y0 + 25, label = "250 m", size = 2.6)
+  }
+  p
+}
+
+p1d <- plot_network_day(map_info$date[1], map_info$title[1], scale_bar = TRUE)
+p1e <- plot_network_day(map_info$date[2], map_info$title[2])
+
+# 7.3 Assemble -----------------------------------------------------------------
+fig_main_1 <- p1a / (p1b | p1c) / (p1d | p1e) +
+  plot_layout(heights = c(1, 1.15, 0.95), guides = "collect") &
+  theme(legend.position = "bottom")
+fig_main_1
+
+ggsave(file.path(fig_dir, "main_WHR_elasticity_dispersion.png"), fig_main_1,
+       width = 7.5, height = 9, dpi = 300)
+
+# 8.0 Main figure 2: elasticity and dispersion across sites --------------------
+# (a) Daily ASDN vs. Q for all sites with each site's fitted power law
+# (b) Elasticity vs. dispersion, one point per site (bars: 95% CI on b)
+# Note: the CIs on b assume independent days; with autocorrelated daily data
+# they are too narrow and are shown only as a relative guide.
+library(ggrepel)
+
+region_shapes <- c("Great Plains" = 21, "Mountain West" = 22, "Southeast" = 24)
+
+site_metrics <- pl_fits %>%
+  select(watershed, elasticity, b_ci_low, b_ci_high, r2) %>%
+  left_join(dispersion, by = "watershed") %>%
+  left_join(site_info %>% mutate(watershed = factor(watershed, levels = site_order)),
+            by = "watershed")
+
+# (a) Daily points (faint) under the fitted lines (white halo for contrast)
+pl_ends <- pl_lines %>% group_by(watershed) %>% slice_max(lQ, n = 1) %>% ungroup()
+
+p2a <- fit_data %>%
+  filter(use_in_fit) %>%
+  ggplot(aes(x = Q_mm_day, y = ASDN_pct, color = watershed)) +
+  geom_point(size = 0.7, alpha = 0.35, shape = 16) +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "grey40", linewidth = 0.4) +
+  geom_line(data = pl_lines, aes(x = Q, y = ASDN_hat, group = watershed),
+            color = "white", linewidth = 2.4) +
+  geom_line(data = pl_lines, aes(x = Q, y = ASDN_hat), linewidth = 1.1) +
+  geom_text_repel(data = pl_ends, aes(x = Q, y = ASDN_hat, label = watershed),
+                  size = 3, fontface = "bold", direction = "y", hjust = 0, nudge_x = 0.25,
+                  segment.color = "grey60", segment.size = 0.3, min.segment.length = 0,
+                  bg.color = "white", bg.r = 0.12, seed = 1) +
+  annotate("text", x = 0, y = Inf, label = "(a)", hjust = -0.3, vjust = 1.4, size = 3.5) +
+  scale_x_log10(labels = log_labels, expand = expansion(mult = c(0.02, 0.17))) +
+  scale_y_log10(breaks = c(1, 2, 5, 10, 20, 50, 100)) +
+  scale_color_manual(values = col_line, guide = "none") +
+  labs(x = "Daily mean discharge (mm/day)", y = "ASDN (% of maximum active length)") +
+  main_theme
+
+# (b) Elasticity vs. dispersion
+p2b <- ggplot(site_metrics, aes(x = resid_sd, y = elasticity)) +
+  geom_errorbar(aes(ymin = b_ci_low, ymax = b_ci_high), width = 0, color = "grey40") +
+  geom_point(aes(fill = watershed, shape = region), size = 3.4, color = "black", stroke = 0.4) +
+  geom_text_repel(aes(label = watershed), size = 3, fontface = "bold", seed = 1,
+                  point.padding = unit(0.4, "lines"), min.segment.length = 1) +
+  annotate("text", x = -Inf, y = Inf, label = "(b)", hjust = -0.3, vjust = 1.4, size = 3.5) +
+  scale_fill_manual(values = col_line, guide = "none") +
+  scale_shape_manual(values = region_shapes, name = NULL) +
+  scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.08))) +
+  scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0, 0.08))) +
+  guides(shape = guide_legend(override.aes = list(fill = "grey70", size = 3))) +
+  labs(x = "Dispersion (SD of log10 residuals)", y = "Elasticity (b)") +
+  main_theme +
+  theme(legend.position = "inside", legend.position.inside = c(0.98, 0.03),
+        legend.justification = c(1, 0), legend.background = element_rect(fill = NA),
+        legend.key.size = unit(0.9, "lines"), legend.text = element_text(size = 8))
+
+# 8.1 Assemble -----------------------------------------------------------------
+fig_main_2 <- p2a | p2b
+fig_main_2
+
+ggsave(file.path(fig_dir, "main_cross_site_elasticity_dispersion.png"), fig_main_2,
+       width = 7.5, height = 3.9, dpi = 300)
