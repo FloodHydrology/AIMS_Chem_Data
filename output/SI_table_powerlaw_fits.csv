@@ -1,0 +1,8 @@
+watershed,region,n,elasticity,b_ci_low,b_ci_high,a,r2,n_saturated,n_days_Q_and_ASDN,n_excl_Q_zero,n_excl_Q_lt_floor,n_excl_ASDN_zero
+KNZ,Great Plains,534,0.217,0.185,0.249,40,0.251,0,1221,647,40,0
+YMR,Great Plains,525,0.317,0.257,0.377,40.6,0.173,4,851,287,21,18
+GBJ,Mountain West,416,0.338,0.297,0.379,48.4,0.386,3,679,261,2,0
+JDR,Mountain West,429,0.202,0.178,0.226,92.1,0.391,203,689,161,21,78
+PRF,Southeast,748,0.219,0.195,0.243,40.8,0.308,66,1126,292,86,0
+TAL,Southeast,1078,0.092,0.084,0.099,92.8,0.367,424,1099,19,2,0
+WHR,Southeast,841,0.163,0.148,0.178,85.8,0.347,314,1086,244,1,0
