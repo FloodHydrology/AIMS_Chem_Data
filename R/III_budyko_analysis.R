@@ -280,7 +280,7 @@ budyko %>%
 print(select(budyko, watershed, WY, Q_cov, P_mm, PET_mm, Q_mm, aridity, evap_index,
              ASDN_mean), n = Inf)
 
-# 5.0 Figure: Budyko space -----------------------------------------------------
+# 5.0 Figure: Budyko space, one point per watershed-water year ----------------
 budyko_curve <- tibble(aridity = 10^seq(log10(0.2), log10(5), length.out = 300)) %>%
   mutate(evap_index = sqrt(aridity * tanh(1 / aridity) * (1 - exp(-aridity))))
 limits <- tibble(aridity = c(0, 1, 5), evap_index = c(0, 1, 1))
@@ -330,5 +330,76 @@ fig_budyko <- ggplot(budyko, aes(x = aridity, y = evap_index)) +
         legend.text = element_text(size = 8), plot.caption = element_text(size = 8, hjust = 0))
 fig_budyko
 
-ggsave(file.path(fig_dir, "SI_budyko_ASDN.png"), fig_budyko,
+ggsave(file.path(fig_dir, "SI_budyko_ASDN_water_years.png"), fig_budyko,
+       width = 8, height = 6.2, dpi = 300)
+
+# 6.0 Figure: Budyko space, one point per watershed ----------------------------
+# Point = mean of the annual indices over the water years shown in section 5
+# (all years with >= 50% Q coverage). Bars = range (min-max) across those years.
+# Size = mean of the annual mean ASDN. With 2-3 years per site the range is a
+# better description of interannual variability than an SD.
+budyko_site <- budyko %>%
+  group_by(watershed, region) %>%
+  summarise(n_wy          = n(),
+            n_complete    = sum(Q_cov >= cov_complete),
+            wy_list       = paste(WY, collapse = ", "),
+            aridity_mean  = mean(aridity),
+            aridity_min   = min(aridity),
+            aridity_max   = max(aridity),
+            evap_mean     = mean(evap_index),
+            evap_min      = min(evap_index),
+            evap_max      = max(evap_index),
+            ASDN_mean     = mean(ASDN_mean, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(record = if_else(n_complete == n_wy, "All years complete",
+                          "Includes incomplete years"),
+         site_label = sprintf("%s (n = %d)", watershed, n_wy))
+
+budyko_site %>%
+  mutate(across(where(is.double), ~round(.x, 2))) %>%
+  write_csv(file.path(tab_dir, "SI_table_budyko_site_means.csv"))
+print(budyko_site, width = Inf)
+
+fig_budyko_site <- ggplot(budyko_site, aes(x = aridity_mean, y = evap_mean)) +
+  geom_line(data = limits, aes(x = aridity, y = evap_index),
+            color = "grey50", linewidth = 0.4, linetype = "dashed") +
+  geom_line(data = budyko_curve, aes(x = aridity, y = evap_index),
+            color = "black", linewidth = 0.7) +
+  geom_errorbar(aes(ymin = evap_min, ymax = evap_max, color = watershed),
+                width = 0, linewidth = 0.7) +
+  geom_errorbarh(aes(xmin = aridity_min, xmax = aridity_max, color = watershed),
+                 height = 0, linewidth = 0.7) +
+  geom_point(aes(size = ASDN_mean, fill = watershed, alpha = record),
+             shape = 21, color = "black", stroke = 0.5) +
+  geom_text_repel(aes(label = site_label, color = watershed), size = 3.2,
+                  fontface = "bold", seed = 4, box.padding = 1, point.padding = 0.6,
+                  min.segment.length = 0.3, segment.color = "grey60", segment.size = 0.3,
+                  bg.color = "white", bg.r = 0.15, show.legend = FALSE) +
+  annotate("text", x = 0.62, y = 0.70, label = "Energy limit", angle = 42, size = 2.8,
+           color = "grey40") +
+  annotate("text", x = 1.02, y = 1.015, label = "Water limit", hjust = 0,
+           size = 2.8, color = "grey40") +
+  annotate("text", x = 2.45, y = 0.965, label = "Budyko (1974)", size = 2.8, angle = 6, hjust = 1) +
+  scale_color_manual(values = col_line, guide = "none") +
+  scale_fill_manual(values = col_line, guide = "none") +
+  scale_alpha_manual(values = c("All years complete" = 1, "Includes incomplete years" = 0.4),
+                     name = "Discharge record") +
+  scale_size_area(max_size = 10, breaks = c(25, 50, 75, 100), limits = c(0, 100),
+                  name = "Mean ASDN (%)") +
+  coord_cartesian(xlim = c(0.4, x_max), ylim = c(y_min, 1.05)) +
+  guides(size  = guide_legend(order = 1, override.aes = list(fill = "grey70")),
+         alpha = guide_legend(order = 2, override.aes = list(size = 4, fill = "grey40"))) +
+  labs(x = "Aridity index, PET / P", y = "Evaporative index, (P − Q) / P",
+       caption = paste0(
+         "Points: mean of annual values over the water years with ≥ 50% of days with Q ",
+         "(n = number of years). Bars: range across years.\n",
+         "Point size: mean network extent (ASDN, % of maximum active length). P and PET (grass ",
+         "reference ET): ", climate_source, ". Q: AIMS outlet discharge.")) +
+  theme_bw() +
+  theme(axis.title = element_text(size = 11), panel.grid.minor = element_blank(),
+        legend.position = "right", legend.title = element_text(size = 9),
+        legend.text = element_text(size = 8), plot.caption = element_text(size = 8, hjust = 0))
+fig_budyko_site
+
+ggsave(file.path(fig_dir, "SI_budyko_ASDN.png"), fig_budyko_site,
        width = 8, height = 6.2, dpi = 300)
